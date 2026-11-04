@@ -92,7 +92,7 @@
   <section class="card hidden" id="stepPw">
     <p class="hint" style="font-size:14px;margin-top:0">出演者（団員）が、知り合いにチケットを事前に渡せないときに、当日受付で渡せるよう取り置きを予約するページです。</p>
     <label class="f" for="email">メールアドレス<span class="req">必須</span></label>
-    <input class="in" id="email" type="email" inputmode="email" autocomplete="email" maxlength="100" placeholder="例: taro@example.com">
+    <input class="in" id="email" type="email" inputmode="email" autocomplete="email" maxlength="100" placeholder="例: yamada@example.com">
     <label class="f" for="pw">取り置き専用パスワード<span class="req">必須</span></label>
     <input class="in" id="pw" type="password" autocomplete="off" placeholder="事前にお知らせしたパスワード">
     <div class="err" id="pwErr"></div>
@@ -258,8 +258,8 @@
     return '<div class="guest" data-key="' + g.key + '">' +
       '<div class="gh"><b>' + (i + 1) + '組目のお客さん</b>' + (guests.length > 1 ? '<button class="rm" type="button" data-rm="' + g.key + '">✕ この組を消す</button>' : '') + '</div>' +
       '<div class="two">' +
-        '<div><label class="f">セイ<span class="req">必須</span><input class="in kana" data-f="sei" maxlength="20" autocomplete="off" placeholder="例: オカダイ" value="' + esc(g.sei) + '"></label></div>' +
-        '<div><label class="f">メイ<span class="req">必須</span><input class="in kana" data-f="mei" maxlength="20" autocomplete="off" placeholder="例: タロウ" value="' + esc(g.mei) + '"></label></div>' +
+        '<div><label class="f">セイ<span class="req">必須</span><input class="in kana" data-f="sei" maxlength="20" autocomplete="off" placeholder="例: クラシキ" value="' + esc(g.sei) + '"></label></div>' +
+        '<div><label class="f">メイ<span class="req">必須</span><input class="in kana" data-f="mei" maxlength="20" autocomplete="off" placeholder="例: サクラ" value="' + esc(g.mei) + '"></label></div>' +
       '</div>' +
       '<div class="err kerr" style="min-height:0;margin-top:4px"></div>' +
       '<label class="f">券種と枚数<span class="req">必須</span></label>' +
