@@ -24,6 +24,7 @@ export async function startWorker(persistDir) {
       name: 'teien-ticket',
       modules: [
         { type: 'ESModule', path: join(root, 'src/index.js') },
+        { type: 'ESModule', path: join(root, 'src/xlsx.js') },
         { type: 'ESModule', path: join(root, 'public/pricing.js') },
       ],
       modulesRoot: root,
@@ -62,7 +63,7 @@ export async function startWorker(persistDir) {
   async function query(sql, ...binds) {
     return (await db.prepare(sql).bind(...binds).all()).results;
   }
-  return { mf, db, api, loginMaster, loginRegister, query, dispose: () => mf.dispose() };
+  return { mf, db, api, cookies, loginMaster, loginRegister, query, dispose: () => mf.dispose() };
 }
 
 export function cleanup(dir) {

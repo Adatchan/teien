@@ -33,6 +33,7 @@
  */
 
 import { DEFAULT_PAYMENTS, MAX_PAYMENTS, MAX_QTY, priceCart, describeItems, itemsFromLines, describeTickets } from '../public/pricing.js';
+import { buildXlsx, colName } from './xlsx.js';
 
 // ログインの種類ごとの設定（受付はレジと同じログイン）
 const ROLES = {
@@ -219,6 +220,8 @@ async function masterApi(request, env, url, route) {
   if (route === 'GET /api/master/data') return json(await masterData(db, sess, P));
   const csvName = request.method === 'GET' && url.pathname.match(/^\/api\/master\/([a-z_]+\.csv)$/);
   if (csvName && CSV_FILES[csvName[1]]) return csvResponse(db, P, csvName[1], url.searchParams);
+  // 団員ごとの精算（Excel。印刷して回収の確認にも使える形）
+  if (route === 'GET /api/master/members.xlsx') return membersXlsxResponse(db, P);
 
   // ----- 取り置き -----
   // CSV の取り込み。dryRun なら確認用の結果だけ返す（何も書き込まない）
@@ -1908,6 +1911,102 @@ function membersCsvRows(_, { reservations }) {
     g.member, g.emails.join(' ') || null, g.count, g.qty, g.handedQty, g.amount, g.collected, g.uncollected,
     g.amount ? (g.uncollected ? (g.collected ? '一部' : '未') : '済') : null, g.others,
   ]));
+}
+
+/**
+ * 団員ごとの精算の Excel。
+ *   シート 1「団員ごとの精算」：団員ごとの件数・枚数・回収する額・回収の状態と、受領サインの空欄。いちばん下に合計（数式）
+ *   シート 2「明細」：団員から回収する取り置きを 1 件ずつ（団員ごとにまとめて並べる）
+ */
+async function membersXlsxResponse(db, P) {
+  const list = await getReservations(db, P.id);
+  const members = memberSummary(list).filter((g) => g.amount || g.count);
+  const stamp = isoJst(new Date().toISOString());
+  const made = `${stamp.slice(0, 10).replace(/-/g, '/')} ${stamp.slice(11, 16)} 作成`;
+  const state = (g) => (!g.amount ? { v: '—', s: 'center' } : !g.uncollected ? { v: '回収済み', s: 'stDone' } : g.collected ? { v: '一部 未回収', s: 'stPart' } : { v: '未回収', s: 'stNo' });
+  const top = 4;   // 見出しの行
+
+  // ---- シート 1：団員ごとの精算 ----
+  const head1 = ['団員', 'メールアドレス', '件数', '枚数', 'うち受け渡し済み(枚)', '回収する額', '回収済み', '未回収', '回収', '受領サイン'];
+  const rows1 = [
+    [{ v: `${P.name}　団員ごとの精算`, s: 'title' }],
+    [{ v: `${made}　｜　「代金は団員から回収」の取り置きを、団員ごとにまとめています（お客さんが来なかった分も含みます）`, s: 'sub' }],
+    [],
+    head1.map((v) => ({ v, s: 'head' })),
+  ];
+  members.forEach((g, i) => {
+    const b = i % 2 ? 'Band' : '';
+    rows1.push([
+      { v: g.member, s: 'text' + b }, { v: g.emails.join('\n'), s: 'wrap' + b }, { v: g.count, s: 'num' + b }, { v: g.qty, s: 'num' + b },
+      { v: g.handedQty, s: 'num' + b }, { v: g.amount, s: 'yen' + b }, { v: g.collected, s: 'yen' + b }, { v: g.uncollected, s: 'yen' + b },
+      state(g), { v: '', s: 'sign' },
+    ]);
+  });
+  const first = top + 1, last = top + members.length;
+  const sum = (ci, v) => ({ f: members.length ? `SUM(${colName(ci)}${first}:${colName(ci)}${last})` : '0', v, s: ci >= 5 ? 'totalYen' : 'totalNum' });
+  const tot = members.reduce((a, g) => ({ count: a.count + g.count, qty: a.qty + g.qty, handed: a.handed + g.handedQty, amount: a.amount + g.amount, collected: a.collected + g.collected, un: a.un + g.uncollected }),
+    { count: 0, qty: 0, handed: 0, amount: 0, collected: 0, un: 0 });
+  const unCount = members.filter((g) => g.uncollected).length;
+  if (!members.length) rows1.push([{ v: '団員から回収する取り置きはまだありません', s: 'sub' }]);
+  rows1.push([{ v: '合計', s: 'totalLabel' }, { v: `${members.length} 人`, s: 'totalLabel' }, sum(2, tot.count), sum(3, tot.qty), sum(4, tot.handed),
+    sum(5, tot.amount), sum(6, tot.collected), sum(7, tot.un), { v: unCount ? `未回収 ${unCount} 人` : '全員回収済み', s: 'totalLabel' }, { v: '', s: 'totalLabel' }]);
+  const heights1 = { 1: 30, [top]: 34 };
+  members.forEach((g, i) => { heights1[first + i] = g.emails.length > 1 ? 18 * g.emails.length + 6 : 28; });
+  heights1[rows1.length] = 28;
+
+  // ---- シート 2：明細 ----
+  const byNo = (a, b) => String(a.no).localeCompare(String(b.no), 'ja', { numeric: true });
+  const items = list.filter((r) => r.settle === 'member')
+    .sort((a, b) => (memberKey(a.member) || '').localeCompare(memberKey(b.member) || '', 'ja') || byNo(a, b));
+  const head2 = ['団員', '予約番号', 'お客さん', '券種・枚数', '枚数', '金額', '受け渡し', '受け渡し日時', '回収', '備考'];
+  const rows2 = [
+    [{ v: `${P.name}　団員から回収する取り置きの明細`, s: 'title' }],
+    [{ v: `${made}　｜　団員ごとにまとめて並べています`, s: 'sub' }],
+    [],
+    head2.map((v) => ({ v, s: 'head' })),
+  ];
+  let band = 0, prev = null;
+  for (const r of items) {
+    const k = memberKey(r.member);
+    if (prev !== null && k !== prev) band ^= 1;   // 団員が変わったら縞の色を変える
+    prev = k;
+    const b = band ? 'Band' : '';
+    const t = r.handedAt ? isoJst(r.handedAt) : '';
+    rows2.push([
+      { v: r.member || '（団員の名前なし）', s: 'text' + b }, { v: r.no, s: 'center' + b }, { v: r.name, s: 'text' + b },
+      { v: describeTickets(r.tickets), s: 'text' + b }, { v: r.qty, s: 'num' + b }, { v: r.amount, s: 'yen' + b },
+      { v: r.handedAt ? '済' : '未', s: 'center' + b }, { v: t ? `${t.slice(5, 10).replace('-', '/')} ${t.slice(11, 16)}` : '', s: 'center' + b },
+      r.collectedAt ? { v: '回収済み', s: 'stDone' } : { v: '未回収', s: 'stNo' }, { v: r.note || '', s: 'wrap' + b },
+    ]);
+  }
+  const f2 = top + 1, l2 = top + items.length;
+  if (!items.length) rows2.push([{ v: '団員から回収する取り置きはまだありません', s: 'sub' }]);
+  rows2.push([{ v: '合計', s: 'totalLabel' }, { v: `${items.length} 件`, s: 'totalLabel' }, { v: '', s: 'totalLabel' }, { v: '', s: 'totalLabel' },
+    { f: items.length ? `SUM(E${f2}:E${l2})` : '0', v: items.reduce((a, r) => a + r.qty, 0), s: 'totalNum' },
+    { f: items.length ? `SUM(F${f2}:F${l2})` : '0', v: items.reduce((a, r) => a + r.amount, 0), s: 'totalYen' },
+    { v: '', s: 'totalLabel' }, { v: '', s: 'totalLabel' }, { v: '', s: 'totalLabel' }, { v: '', s: 'totalLabel' }]);
+  const heights2 = { 1: 30, [top]: 30 };
+  items.forEach((_, i) => { heights2[f2 + i] = 24; });
+  heights2[rows2.length] = 28;
+
+  const bytes = buildXlsx({
+    title: `${P.name} 団員ごとの精算`, creator: '定演チケットシステム',
+    sheets: [
+      { name: '団員ごとの精算', cols: [18, 30, 7, 7, 12, 13, 13, 13, 14, 18], rows: rows1, heights: heights1, merges: ['A1:J1', 'A2:J2'],
+        freeze: `A${top + 1}`, autoFilter: members.length ? `A${top}:J${last}` : null, printTitles: `$${top}:$${top}`, landscape: true },
+      { name: '明細', cols: [18, 10, 20, 24, 7, 12, 10, 13, 12, 30], rows: rows2, heights: heights2, merges: ['A1:J1', 'A2:J2'],
+        freeze: `A${top + 1}`, autoFilter: items.length ? `A${top}:J${l2}` : null, printTitles: `$${top}:$${top}`, landscape: true },
+    ],
+  });
+  const stampFile = stamp.slice(0, 16).replace(/[-:T]/g, '');
+  const jp = `団員ごとの精算_${P.name}_${stampFile}.xlsx`;
+  return new Response(bytes, {
+    headers: {
+      'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'content-disposition': `attachment; filename="teien_p${P.id}_members_${stampFile}.xlsx"; filename*=UTF-8''${encodeURIComponent(jp)}`,
+      'cache-control': 'no-store',
+    },
+  });
 }
 
 /** 取り込みの様式（見出しと記入例 2 行。券種は登録済みの名前を使う） */

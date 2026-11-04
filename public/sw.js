@@ -6,7 +6,7 @@
  * - ネットワーク優先：つながれば最新を表示してキャッシュも更新、つながらない（または遅い）ときだけキャッシュを使う。
  * - アプリを更新したら VERSION を変える。新しい版が入ると古いキャッシュは消える。
  */
-const VERSION = '2026-11-04-7';
+const VERSION = '2026-11-04-8';
 const CACHE = 'teien-shell-' + VERSION;
 const FONT_CACHE = 'teien-fonts-v2';        // Web フォント（版をまたいで使い回す。フォントを変えたら v を上げて古いものを消す）
 const PAGES = ['/admin', '/reception'];

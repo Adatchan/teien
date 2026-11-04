@@ -412,6 +412,16 @@ describe('ウェブの取り置き予約（/order・団員が知り合いの分�
     const csv = csvRows((await w.api('/api/master/members.csv', { role: 'master' })).body);
     assert.equal(csv[0], '団員,メールアドレス,取り置き(件),枚数,うち受け渡し済み(枚),団員から回収する額(円),回収済み(円),未回収(円),回収,団員の精算でない取り置き(件)');
     assert.ok(csv.some((l) => l.startsWith('佐藤 一郎,sato@example.com,1,1,0,1000,0,1000,未,0')));
+    // Excel（.xlsx は ZIP。先頭が PK）
+    const x = await w.mf.dispatchFetch('http://localhost/api/master/members.xlsx', { headers: { Cookie: w.cookies.master } });
+    assert.equal(x.status, 200);
+    assert.equal(x.headers.get('content-type'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    const bytes = new Uint8Array(await x.arrayBuffer());
+    assert.deepEqual([...bytes.slice(0, 2)], [0x50, 0x4b]);
+    const text = new TextDecoder().decode(bytes);
+    assert.ok(text.includes('xl/worksheets/sheet2.xml'));
+    assert.ok(text.includes('山田 花子') && text.includes('SUM(F5:F'));
+    assert.equal((await w.mf.dispatchFetch('http://localhost/api/master/members.xlsx')).status, 401, 'ログインしないと取れない');
   });
   test('CSV の「団員」の列：支払が空欄なら団員から回収、「当日」なら受付で', async () => {
     const p = (await w.api('/api/master/reservations/import', { role: 'master', body: { mode: 'append', dryRun: true,
