@@ -153,6 +153,7 @@
       <div class="pj-grid">
         <label class="pj-wide"><span class="lb">公演名 <span class="req">必須</span></span><input id="npName" type="text" maxlength="40" placeholder="例: 第61回定期演奏会"></label>
         <label><span class="lb">公演日 <span class="req">必須</span></span><input id="npStart" type="date"></label>
+        <label><span class="lb">開場時刻（ウェブ予約の締め切り）</span><input id="npOpen" type="time" step="300"></label>
         <label><span class="lb">最終日（2日以上のとき）</span><input id="npEnd" type="date"></label>
       </div>
       <div class="pj-copy">
@@ -195,8 +196,10 @@
       <div class="pj-grid">
         <label class="pj-wide"><span class="lb">公演名 <span class="req">必須</span></span><input id="psName" type="text" maxlength="40" placeholder="例: 第61回定期演奏会"></label>
         <label><span class="lb">公演日 <span class="req">必須</span></span><input id="psStart" type="date"></label>
+        <label><span class="lb">開場時刻（ウェブ予約の締め切り）</span><input id="psOpen" type="time" step="300"></label>
         <label><span class="lb">最終日（2日以上のとき）</span><input id="psEnd" type="date"></label>
       </div>
+      <div class="note" style="margin-top:0">ウェブ予約は、公演日のこの時刻に自動で締め切ります。</div>
       <button class="btn" id="psBtn">保存</button>
     </details>
   </section>
@@ -254,12 +257,11 @@
 
   <section class="card" id="webCard">
     <h2>ウェブ予約（取り置き） <span class="badge" id="webState"></span></h2>
-    <div class="note" style="margin:0 0 8px">団員が、知り合いにチケットを事前に渡せないときに使う予約ページです。団員は<b>メールアドレスと取り置き専用パスワード</b>で入り、団員氏名・お客さんの氏名（カタカナ）・券種と枚数を入れて予約します。<b>開場時刻になると自動で締め切ります。</b>届いた予約は W1, W2… の番号で取り置きの一覧に入り、受付の画面にすぐ出ます。代金はふつう<b>終演後に団員から回収</b>します（下の「団員ごとの精算」）。</div>
+    <div class="note" style="margin:0 0 8px">団員が、知り合いにチケットを事前に渡せないときに使う予約ページです。団員は<b>メールアドレスと取り置き専用パスワード</b>で入り、団員氏名を入れ、お客さんごとのカード（氏名はカタカナ・券種と枚数）を必要なだけ足してまとめて予約します。<b>開場時刻になると自動で締め切ります。</b>届いた予約は W1, W2… の番号で取り置きの一覧に入り、受付の画面にすぐ出ます。代金はいつも<b>終演後に団員から回収</b>します（下の「団員ごとの精算」）。</div>
     <label class="pj-check"><input type="checkbox" id="webEnabled"> ウェブ予約を受け付ける</label>
+    <div class="note" id="webDeadline" style="margin:0 0 6px"></div>
     <div class="pj-grid">
-      <label><span class="lb">開場日（締め切りの日）</span><input id="webDate" type="date"></label>
-      <label><span class="lb">開場時刻（締め切り）</span><input id="webTime" type="time" step="300"></label>
-      <label><span class="lb">1回の予約の上限枚数</span><input id="webMax" type="number" min="1" max="200" inputmode="numeric"></label>
+      <label><span class="lb">お客さん 1 人あたりの上限枚数</span><input id="webMax" type="number" min="1" max="200" inputmode="numeric"></label>
       <label><span class="lb">取り置き専用パスワード <span class="badge" id="webPwState"></span></span><input id="webPw" type="text" autocomplete="off" maxlength="100" placeholder="決める・変えるときだけ入力（4文字以上）"></label>
     </div>
     <div class="row"><button class="btn" id="webSave">保存</button><span class="dirty-badge hidden" id="webDirty">保存していません</span></div>
@@ -460,9 +462,9 @@
 
   <details>
     <summary>ウェブ予約（開場時刻まで）</summary>
-    <p>団員が、知り合いにチケットを事前に渡せないときに使います。「ウェブ予約（取り置き）」の欄で、<b>ウェブ予約を受け付ける</b>にチェックを入れ、<b>開場日・開場時刻</b>（締め切り）、1回の予約の上限枚数、<b>取り置き専用パスワード</b>を決めて「保存」を押します。予約ページ（<code>/order</code>）の URL とパスワードを、団員に伝えてください。</p>
-    <p>団員は<b>メールアドレスとパスワード</b>で入り、<b>団員氏名</b>、当日来るお客さんの氏名（<b>カタカナ</b>のセイ・メイ。ひらがなは自動でカタカナに直り、漢字や英字は受け付けません）、券種と枚数を入れて予約します。予約番号は W1, W2… です。届いた予約はすぐ取り置きの一覧と受付の画面に入ります。</p>
-    <p>代金は、ふつう<b>終演後に団員からまとめて回収</b>します（受付ではお客さんから受け取りません）。団員が「お客さんが当日、受付で払う」を選んだ予約だけは、受付で受け取ります。回収の状況は「団員ごとの精算」で確かめ、受け取ったら「回収済みにする」を押します。</p>
+    <p>団員が、知り合いにチケットを事前に渡せないときに使います。まず「公演の設定」で<b>開場時刻</b>（締め切り）を入れます。次に「ウェブ予約（取り置き）」の欄で、<b>ウェブ予約を受け付ける</b>にチェックを入れ、お客さん 1 人あたりの上限枚数と<b>取り置き専用パスワード</b>を決めて「保存」を押します。予約ページ（<code>/order</code>）の URL とパスワードを、団員に伝えてください。</p>
+    <p>団員は<b>メールアドレスとパスワード</b>で入り、<b>団員氏名</b>を入れ、当日来るお客さんごとのカード（氏名は<b>カタカナ</b>のセイ・メイ。ひらがなは自動でカタカナに直り、漢字や英字は受け付けません。券種と枚数、備考）を「＋ お客さんを追加」で必要なだけ足して、まとめて予約します。予約番号はお客さんごとに W1, W2… です。予約が終わると控えが表示され、「控えをメールで送る」で団員のメールアプリから自分あてに控えを送れます。届いた予約はすぐ取り置きの一覧と受付の画面に入ります。</p>
+    <p>代金はいつも<b>終演後に団員からまとめて回収</b>します（受付ではお客さんから受け取りません）。回収の状況は「団員ごとの精算」で確かめ、受け取ったら「回収済みにする」を押します。</p>
     <p><b>開場時刻を過ぎると自動で締め切り</b>、予約ページには「締め切りました」と出ます。受付の端末は数秒ごとに一覧を読み直しているので、開場までに届いた予約もそのまま受付に出ます（事前に保存した CSV には、そのあとの予約は入っていないので注意）。</p>
     <p>パスワードは画面に残りません。忘れたら新しく決め直してください（前のパスワードは使えなくなります）。パスワードを何度も間違えた接続元は、10分間止まります。</p>
     <p>CSV を「この CSV に置き換える」で取り込んでも、ウェブで受け付けた取り置きは消えません。ウェブ予約の<b>取り消し</b>は、「取り置きの一覧」の行の「削除」で 1 件ずつ消せます。<b>変更</b>は、「取り置きの一覧と受け渡し」の CSV を書き換えて取り込み直します（W の番号をそのまま使うと、その予約を更新します）。</p>
@@ -748,7 +750,6 @@
 
   // ---------- ウェブ予約 ----------
   let webDirty = false;
-  const jst = iso => { const t = new Date(Date.parse(iso) + 9 * 3600000).toISOString(); return { date: t.slice(0, 10), time: t.slice(11, 16) }; };
   function renderWeb(w) {
     const label = { open: ['受付中', 'ok'], closed: ['締め切り済み（開場を過ぎた）', 'warn'], off: ['受け付けていない', ''], incomplete: ['設定が足りない', 'warn'] }[w.state];
     $('webState').textContent = label[0] + (w.state === 'open' && w.openAt ? '・' + fmt(w.openAt) + ' まで' : '');
@@ -756,19 +757,17 @@
     $('webPwState').textContent = w.password ? '設定済み' : '未設定';
     $('webPwState').className = 'badge ' + (w.password ? 'ok' : 'warn');
     $('webUrl').textContent = location.origin + '/order';
+    $('webDeadline').innerHTML = w.openAt ? '締め切り：<b>' + esc(fmt(w.openAt)) + '</b>（上の「公演の設定」の開場時刻）'
+      : '<span class="danger-text">締め切り（開場時刻）が決まっていません。上の「公演の設定」で開場時刻を入れてください。</span>';
     if (webDirty) return;
     $('webEnabled').checked = w.enabled;
-    const o = w.openAt ? jst(w.openAt) : { date: (lastProject && lastProject.startDate) || '', time: '' };
-    $('webDate').value = o.date; $('webTime').value = o.time;
     $('webMax').value = w.max;
     $('webPw').value = '';
     $('webDirty').classList.add('hidden');
   }
   $('webCard').addEventListener('input', () => { webDirty = true; $('webDirty').classList.remove('hidden'); });
   $('webSave').onclick = () => {
-    const date = $('webDate').value, time = $('webTime').value;
-    if ((date && !time) || (!date && time)) return toast('開場日と開場時刻を両方入れてください', true);
-    const body = { enabled: $('webEnabled').checked, openAt: date ? date + 'T' + time + ':00+09:00' : null, max: Number($('webMax').value) };
+    const body = { enabled: $('webEnabled').checked, max: Number($('webMax').value) };
     if ($('webPw').value.trim()) body.password = $('webPw').value.trim();
     run(async () => { const d = await api('web-order', body); webDirty = false; return d; }, 'ウェブ予約の設定を保存しました');
   };
@@ -1035,7 +1034,7 @@
     $('projectList').innerHTML = d.projects.length ? d.projects.map(p =>
       '<div class="pj-item' + (p.active ? ' active' : '') + '">' +
         '<div class="info"><div class="nm">' + esc(p.name) + (p.active ? ' <span class="badge ok">当日に使う</span>' : '') + '</div>' +
-        '<div class="meta">' + periodText(p) + '・券種 ' + p.products + '件</div>' +
+        '<div class="meta">' + periodText(p) + (p.openTime ? '・開場 ' + p.openTime : '') + '・券種 ' + p.products + '件</div>' +
         '<div class="meta">取り置き ' + p.reservations + '件・当日券 ' + yen(p.total) + '（' + p.orders + '件）</div></div>' +
         '<div class="acts"><button class="btn small" data-open="' + p.id + '">開く</button>' +
         (p.active ? '' : '<button class="btn sub small" data-activate="' + p.id + '">当日に使う</button>') +
@@ -1072,6 +1071,7 @@
   const readFields = prefix => ({
     name: $(prefix + 'Name').value,
     startDate: $(prefix + 'Start').value, endDate: $(prefix + 'End').value || $(prefix + 'Start').value,
+    openTime: $(prefix + 'Open').value,
   });
   $('npStart').onchange = () => { if ($('npEnd').value && $('npEnd').value < $('npStart').value) $('npEnd').value = $('npStart').value; };
 
@@ -1088,7 +1088,7 @@
       (body.activate ? '\nレジと受付は、この公演に切り替わります。' : ''))) return;
     try {
       const d = await api('projects', body);
-      ['npName', 'npEnd'].forEach(id => $(id).value = '');
+      ['npName', 'npEnd', 'npOpen'].forEach(id => $(id).value = '');
       formReady = false;
       toast('公演「' + body.name.trim() + '」を作りました');
       openProject(d.created);
@@ -1147,10 +1147,11 @@
     $('pjActive').textContent = ps.active ? '当日に使う公演' : '当日には使っていない';
     $('pjActive').className = 'badge ' + (ps.active ? 'ok' : 'warn');
     $('pjActivateBtn').classList.toggle('hidden', ps.active);
-    $('pjSummary').textContent = periodText(ps);
+    $('pjSummary').textContent = periodText(ps) + (ps.openTime ? '・開場 ' + ps.openTime : '・開場時刻なし');
     if (!psDirty) {
       $('psName').value = ps.name;
       $('psStart').value = ps.startDate; $('psEnd').value = ps.endDate === ps.startDate ? '' : ps.endDate;
+      $('psOpen').value = ps.openTime || '';
     }
     // CSV はこの公演の分をダウンロード
     document.querySelectorAll('a[data-csv]').forEach(a => { a.href = a.getAttribute('href').split('?')[0] + '?project=' + ps.id; });

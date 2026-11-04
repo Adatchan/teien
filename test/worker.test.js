@@ -329,27 +329,52 @@ describe('ウェブの取り置き予約（/order・団員が知り合いの分�
     assert.deepEqual(r.body.products.map((p) => p.name), ['一般', '学生']);
     assert.equal(r.body.max, 6);
   });
-  test('予約すると W1, W2… で取り置きに入り、受付の画面に出る。代金は団員から回収（受付では受け取らない）', async () => {
+  test('予約すると W1, W2… で取り置きに入り、受付の画面に出る。代金はいつも団員から回収（受付では受け取らない）', async () => {
     let r = await order({ note: '2階席希望' });
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body.reservation.no, 'W1');
-    assert.equal(r.body.reservation.name, 'ヨヤク イチロウ');
-    assert.equal(r.body.reservation.amount, 1800);
-    assert.equal(r.body.reservation.settle, 'member');
-    // ひらがな・半角カナはカタカナに直す。お客さんが受付で払うこともできる
+    assert.equal(r.body.reservations[0].no, 'W1');
+    assert.equal(r.body.reservations[0].name, 'ヨヤク イチロウ');
+    assert.equal(r.body.reservations[0].amount, 1800);
+    assert.equal(r.body.reservations[0].settle, 'member');
+    // ひらがな・半角カナはカタカナに直す。「受付で払う」を送っても団員から回収になる
     r = await order({ sei: 'よやく', mei: 'ｼﾞﾛｳ', settle: 'reception', items: { [id('学生')]: 1, [id('一般')]: 1 } });
-    assert.equal(r.body.reservation.no, 'W2');
-    assert.equal(r.body.reservation.name, 'ヨヤク ジロウ');
+    assert.equal(r.body.reservations[0].no, 'W2');
+    assert.equal(r.body.reservations[0].name, 'ヨヤク ジロウ');
     const rec = (await w.api('/api/admin/reservations', { role: 'register' })).body.reservations;
     const w1 = rec.find((x) => x.no === 'W1');
     assert.deepEqual([w1.source, w1.settle, w1.due, w1.memberDue, w1.member, w1.email, w1.kana, w1.note],
       ['web', 'member', 0, 1800, '山田 花子', 'yamada@example.com', 'ヨヤク イチロウ', '2階席希望']);
     const w2 = rec.find((x) => x.no === 'W2');
-    assert.deepEqual([w2.settle, w2.due, w2.memberDue], ['reception', 1500, 0]);
+    assert.deepEqual([w2.settle, w2.due, w2.memberDue], ['member', 0, 1500]);
     const d = (await w.api('/api/master/data', { role: 'master' })).body;
     assert.equal(d.reservations.web, 2);
-    assert.equal(d.reservations.memberTotal, 1800);
-    assert.equal(d.reservations.dueTotal, 1500);
+    assert.equal(d.reservations.memberTotal, 3300);
+    assert.equal(d.reservations.dueTotal, 0);
+  });
+  test('複数のお客さんをまとめて予約できる（お客さんごとに番号）。同じ氏名が 2 回はだめ。1 人でも間違いがあれば 1 人も入らない', async () => {
+    const guests = [
+      { sei: 'マトメ', mei: 'イチ', items: { [id('一般')]: 1 }, note: '前の方の席' },
+      { sei: 'まとめ', mei: 'に', items: { [id('学生')]: 2 } },
+    ];
+    let r = await w.api('/api/order', { body: { ...auth, clientId: cid(), member: '山田 花子', guests } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.reservations.map((x) => [x.no, x.name, x.amount, x.note]), [['W3', 'マトメ イチ', 1000, '前の方の席'], ['W4', 'マトメ ニ', 1000, '']]);
+    assert.equal(r.body.mailed, false, 'メールの送信サービスを設定していなければ送らない');
+    const before = (await w.query('SELECT COUNT(*) AS n FROM reservations'))[0].n;
+    r = await w.api('/api/order', { body: { ...auth, clientId: cid(), member: '山田 花子', guests: [{ sei: 'イイ', mei: 'ヒト', items: { [id('一般')]: 1 } }, { sei: '悪い', mei: 'ヒト', items: { [id('一般')]: 1 } }] } });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /2人目/);
+    r = await w.api('/api/order', { body: { ...auth, clientId: cid(), member: '山田 花子', guests: [guests[0], guests[0]] } });
+    assert.equal(r.status, 400);
+    assert.equal((await w.query('SELECT COUNT(*) AS n FROM reservations'))[0].n, before);
+    // 同じ送信をもう一度：まとめて 1 回分
+    const c = cid();
+    const a = await w.api('/api/order', { body: { ...auth, clientId: c, member: '山田 花子', guests: [{ sei: 'サイ', mei: 'ソウ', items: { [id('一般')]: 1 } }, { sei: 'サイ', mei: 'ソウニ', items: { [id('一般')]: 1 } }] } });
+    const b = await w.api('/api/order', { body: { ...auth, clientId: c, member: '山田 花子', guests: [{ sei: 'サイ', mei: 'ソウ', items: { [id('一般')]: 1 } }, { sei: 'サイ', mei: 'ソウニ', items: { [id('一般')]: 1 } }] } });
+    assert.equal(b.body.duplicate, true);
+    assert.deepEqual(b.body.reservations.map((x) => x.no), a.body.reservations.map((x) => x.no));
+    // あとで消す（ほかのテストの金額に影響しないように）
+    await w.query("DELETE FROM reservations WHERE name IN ('マトメ イチ', 'マトメ ニ', 'サイ ソウ', 'サイ ソウニ')");
   });
   test('お客さんの氏名はカタカナだけ（セイ・メイとも必須）。団員氏名も必須', async () => {
     for (const bad of [{ sei: '' }, { mei: '' }, { sei: '山田' }, { mei: 'Taro' }, { mei: 'タロウ1' }, { member: '' }]) {
@@ -361,7 +386,7 @@ describe('ウェブの取り置き予約（/order・団員が知り合いの分�
     const c = cid();
     const a = await order({ clientId: c, sei: 'ニジュウ', mei: 'ソウシン' });
     const b = await order({ clientId: c, sei: 'ニジュウ', mei: 'ソウシン' });
-    assert.equal(a.body.reservation.no, b.body.reservation.no);
+    assert.equal(a.body.reservations[0].no, b.body.reservations[0].no);
     assert.equal(b.body.duplicate, true);
     assert.equal((await w.query("SELECT COUNT(*) AS n FROM reservations WHERE name = 'ニジュウ ソウシン'"))[0].n, 1);
   });
@@ -375,14 +400,14 @@ describe('ウェブの取り置き予約（/order・団員が知り合いの分�
     await order({ member: '佐藤 一郎', email: 'sato@example.com', sei: 'サトウ', mei: 'ノ', items: { [id('一般')]: 1 } });
     let d = (await w.api('/api/master/data', { role: 'master' })).body;
     const yamada = d.members.find((m) => m.member.startsWith('山田'));
-    // W1（1,800）＋ 二重送信（1,800）＋ ベツノ（1,000）。W2 は受付で払うので団員の精算には入らない
-    assert.deepEqual([yamada.count, yamada.amount, yamada.uncollected, yamada.others], [4, 4600, 4600, 1]);
+    // W1（1,800）＋ W2（1,500）＋ 二重送信（1,800）＋ ベツノ（1,000）
+    assert.deepEqual([yamada.count, yamada.amount, yamada.uncollected, yamada.others], [4, 6100, 6100, 0]);
     assert.deepEqual(yamada.emails, ['yamada@example.com']);
     const r = await w.api('/api/master/members/collect', { role: 'master', body: { member: '山田花子', collected: true } });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     d = r.body;
-    assert.equal(d.members.find((m) => m.member.startsWith('山田')).collected, 4600);
-    assert.equal(d.reservations.memberCollected, 4600);
+    assert.equal(d.members.find((m) => m.member.startsWith('山田')).collected, 6100);
+    assert.equal(d.reservations.memberCollected, 6100);
     assert.equal(d.reservations.memberUncollected, 1000);
     const csv = csvRows((await w.api('/api/master/members.csv', { role: 'master' })).body);
     assert.equal(csv[0], '団員,メールアドレス,取り置き(件),枚数,うち受け渡し済み(枚),団員から回収する額(円),回収済み(円),未回収(円),回収,団員の精算でない取り置き(件)');
@@ -429,6 +454,18 @@ describe('公演', () => {
   });
   after(async () => { await w.dispose(); cleanup(dir); });
 
+  test('公演の設定で開場時刻を決めると、ウェブ予約の締め切りになる（公演日のその時刻・日本時間）', async () => {
+    let r = await w.api('/api/master/projects/1', { role: 'master', body: { name: '最初の公演', startDate: '2027-06-01', endDate: '2027-06-01', openTime: '13:30' } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.projectSettings.openAt, '2027-06-01T04:30:00.000Z');
+    assert.equal(r.body.projectSettings.openTime, '13:30');
+    // 公演日を変えると、開場時刻はそのままで日付が変わる
+    r = await w.api('/api/master/projects/1', { role: 'master', body: { startDate: '2027-06-02', endDate: '2027-06-02' } });
+    assert.equal(r.body.projectSettings.openAt, '2027-06-02T04:30:00.000Z');
+    assert.equal((await w.api('/api/master/projects/1', { role: 'master', body: { openTime: '25:00' } })).status, 400);
+    r = await w.api('/api/master/projects', { role: 'master', body: { name: '開場あり', startDate: '2027-12-01', openTime: '18:00' } });
+    assert.equal(r.body.projects.find((x) => x.name === '開場あり').openAt, '2027-12-01T09:00:00.000Z');
+  });
   test('入力のチェック', async () => {
     assert.equal((await w.api('/api/master/projects', { role: 'master', body: { name: '', startDate: '2027-06-01' } })).status, 400);
     assert.equal((await w.api('/api/master/projects', { role: 'master', body: { name: 'x', startDate: '2027-06-02', endDate: '2027-06-01' } })).status, 400);

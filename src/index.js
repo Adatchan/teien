@@ -50,7 +50,7 @@ const PBKDF2_ITER = 100000;   // Workers の上限
 const MAX_RESERVATIONS = 3000;   // 1 公演の取り置きの上限（受付の画面で扱える数）
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     try {
       // 通信できるかの確認用（レジ・受付のオンライン／オフライン表示）。DB には触らない
@@ -64,7 +64,7 @@ export default {
         if (origin && origin !== url.origin) return json({ error: '不正なリクエストです' }, 403);
       }
 
-      if (url.pathname === '/api/order' || url.pathname.startsWith('/api/order/')) return await orderApi(request, env, url, route);
+      if (url.pathname === '/api/order' || url.pathname.startsWith('/api/order/')) return await orderApi(request, env, url, route, ctx);
       if (url.pathname.startsWith('/api/admin/')) return await registerApi(request, env, url, route);
       if (url.pathname.startsWith('/api/master/')) return await masterApi(request, env, url, route);
       return json({ error: 'Not Found' }, 404);
@@ -202,11 +202,11 @@ async function masterApi(request, env, url, route) {
       await audit(db, 'マスター', role, '公演を削除', `${P.name}（当日券の会計 ${st.n} 件・売上 ${yen(st.total)}・取り置き ${rc.n} 件・券種 ${pc.n} 件を削除）`);
       return json(await projectsData(db));
     } else {
-      // 公演の設定（公演名・期間）の変更
+      // 公演の設定（公演名・期間・開場時刻）の変更
       const f = readProjectFields(await readJson(request), P);
-      await db.prepare('UPDATE projects SET name = ?, start_date = ?, end_date = ? WHERE id = ?')
-        .bind(f.name, f.startDate, f.endDate, P.id).run();
-      await audit(db, 'マスター', role, '公演の設定を変更', `［${f.name}］${f.startDate}〜${f.endDate}`);
+      await db.prepare('UPDATE projects SET name = ?, start_date = ?, end_date = ?, open_at = ? WHERE id = ?')
+        .bind(f.name, f.startDate, f.endDate, f.openAt, P.id).run();
+      await audit(db, 'マスター', role, '公演の設定を変更', `［${f.name}］${f.startDate}〜${f.endDate}` + (f.openTime ? `・開場 ${f.openTime}` : '・開場時刻なし'));
     }
     return json(await masterData(db, sess, await getProject(db, P.id)));
   }
@@ -298,7 +298,7 @@ async function masterApi(request, env, url, route) {
     }
     const enabled = body.enabled !== undefined ? !!body.enabled : P.orderEnabled;
     if (enabled && !hash) throw httpError('ウェブ予約を受け付けるには、取り置き専用パスワードを決めてください', 400);
-    if (enabled && !openAt) throw httpError('ウェブ予約を受け付けるには、開場日時（締め切り）を入れてください', 400);
+    if (enabled && !openAt) throw httpError('ウェブ予約を受け付けるには、上の「公演の設定」で開場時刻（締め切り）を入れてください', 400);
     await db.prepare('UPDATE projects SET order_enabled = ?, open_at = ?, order_max = ?, order_pw_hash = ? WHERE id = ?')
       .bind(enabled ? 1 : 0, openAt, max, hash, P.id).run();
     await audit(db, 'マスター', role, 'ウェブ予約の設定を変更',
@@ -795,7 +795,8 @@ async function projectLabel(db, id) {
 }
 
 /** 画面に渡す公演の情報 */
-const projectInfo = (P) => ({ id: P.id, name: P.name, startDate: P.startDate, endDate: P.endDate, payments: P.payments, webOrder: webOrderInfo(P) });
+const projectInfo = (P) => ({ id: P.id, name: P.name, startDate: P.startDate, endDate: P.endDate, payments: P.payments,
+  openAt: P.openAt, openTime: P.openAt ? isoJst(P.openAt).slice(11, 16) : '', webOrder: webOrderInfo(P) });
 
 /** ウェブ予約の状態。open: いま受け付けているか（受け付ける設定で、パスワードがあり、開場前） */
 function webOrderInfo(P, now = Date.now()) {
@@ -832,7 +833,11 @@ function readProjectFields(body, base = {}) {
   const startDate = date(body.startDate ?? base.startDate, '公演日');
   const endDate = date(body.endDate ?? base.endDate ?? startDate, '最終日');
   if (endDate < startDate) throw httpError('最終日は公演日と同じか、それより後にしてください', 400);
-  return { name, startDate, endDate };
+  // 開場時刻（ウェブ予約の締め切り）。公演日のその時刻（日本時間）。空なら決めていない
+  const openTime = String(body.openTime ?? (base.openAt ? isoJst(base.openAt).slice(11, 16) : '')).trim();
+  if (openTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(openTime)) throw httpError('開場時刻は 18:00 のように入力してください', 400);
+  const openAt = openTime ? new Date(`${startDate}T${openTime}:00+09:00`).toISOString() : null;
+  return { name, startDate, endDate, openTime, openAt };
 }
 
 /** 公演の一覧（当日券の件数・売上、取り置きの件数つき） */
@@ -858,8 +863,8 @@ async function createProject(db, body) {
   if (body.copyFrom && !src) throw httpError('複製元の公演が見つかりません', 400);
   // 支払方法：複製するなら複製元と同じ、入力があればそれ、なければ 現金
   const payments = src && copy.payments ? src.payments : body.payments ? parsePayments(body.payments) : [...DEFAULT_PAYMENTS];
-  const res = await db.prepare(`INSERT INTO projects (name, start_date, end_date, payments, created_at) VALUES (?, ?, ?, ?, ?)`)
-    .bind(f.name, f.startDate, f.endDate, JSON.stringify(payments), new Date().toISOString()).run();
+  const res = await db.prepare(`INSERT INTO projects (name, start_date, end_date, open_at, payments, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+    .bind(f.name, f.startDate, f.endDate, f.openAt, JSON.stringify(payments), new Date().toISOString()).run();
   const id = res.meta.last_row_id;
   let copied = 0;
   if (src && copy.products) {
@@ -1595,20 +1600,22 @@ async function applyImport(db, P, plan) {
 // ===== ウェブの取り置き予約（/order） =====
 // 出演者（団員）が、知り合いにチケットを事前に渡せないときに使う。
 //   1. 団員のメールアドレスと、事前に渡した取り置き専用パスワードで認証（間違いが続くとしばらく止める）
-//   2. 団員氏名、お客さんの氏名（カタカナ。セイ・メイ）、券種と枚数を入れて予約
-//   代金は終演後に団員からまとめて回収するのが基本（settle = member）。お客さんが受付で払うこともできる（settle = reception）
+//   2. 団員氏名を入れ、お客さんごとのカード（氏名はカタカナのセイ・メイ、券種と枚数、備考）を必要なだけ足して、まとめて予約
+//   代金はいつも、終演後に団員からまとめて回収する（settle = member。受付ではお客さんから受け取らない）
+//   3. 予約したら控えを表示。メールの送信サービス（Resend）の設定があれば、団員のメールアドレスに控えを送る
 // ログインはしない。予約のたびにパスワードを確かめる。
 // 受け付けるのは「当日に使う」公演で、ウェブ予約を受け付ける設定にしてあり、開場時刻より前のときだけ。
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_GUESTS = 10;   // 1 回にまとめて予約できるお客さんの数
 /** カタカナにそろえる（ひらがな・半角カナ・全角英数を直し、空白を取る） */
 const toKatakana = (s) => String(s || '').normalize('NFKC').replace(/[ぁ-ゖ]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0x60)).replace(/\s+/g, '');
 const KATAKANA_RE = /^[ァ-ー]+$/;   // ァ〜ヺ・ー（中黒も可）
 
-async function orderApi(request, env, url, route) {
+async function orderApi(request, env, url, route, ctx) {
   const db = env.DB;
   const P = await getActiveProject(db);
   const info = webOrderInfo(P);
-  const pub = () => ({ project: { id: P.id, name: P.name, startDate: P.startDate }, open: info.open, state: info.state, openAt: P.openAt, max: P.orderMax });
+  const pub = () => ({ project: { id: P.id, name: P.name, startDate: P.startDate }, open: info.open, state: info.state, openAt: P.openAt, max: P.orderMax, maxGuests: MAX_GUESTS, mail: mailConfigured(env) });
 
   // 予約のページを開いたとき（公演名と、受け付けているかどうかだけ。券種と価格は認証のあと）
   if (route === 'GET /api/order/status') return json(pub());
@@ -1629,66 +1636,83 @@ async function orderApi(request, env, url, route) {
   if (route !== 'POST /api/order') return json({ error: 'Not Found' }, 404);
 
   if (body.projectId != null && Number(body.projectId) !== P.id) throw httpError('受け付ける公演が変わりました。ページを開き直してください', 409);
-  // 同じ予約を 2 回送った（通信が切れて送り直したなど）：1 件として扱い、最初の予約を返す
+  // 同じ予約を 2 回送った（通信が切れて送り直したなど）：1 回分として扱い、最初の予約を返す
+  // （お客さんごとの会計ID は「送信の ID-番号」）
   const clientId = String(body.clientId || '');
-  if (!/^[A-Za-z0-9_-]{8,64}$/.test(clientId)) throw httpError('リクエストが不正です。ページを開き直してください', 400);
-  const dup = await db.prepare('SELECT * FROM reservations WHERE client_id = ?').bind(clientId).first();
-  if (dup) return json({ ok: true, duplicate: true, reservation: orderReceipt(rowToReservation(dup), P) });
+  if (!/^[A-Za-z0-9_-]{8,60}$/.test(clientId)) throw httpError('リクエストが不正です。ページを開き直してください', 400);
+  const already = async () => (await db.prepare("SELECT * FROM reservations WHERE client_id = ? OR client_id GLOB ? ORDER BY id").bind(clientId, clientId + '-*').all()).results;
+  const dup = await already();
+  if (dup.length) return json({ ok: true, duplicate: true, reservations: dup.map((r) => orderReceipt(rowToReservation(r), P)), mailed: false });
 
   const member = cleanName(body.member).normalize('NFKC').replace(/\s+/g, ' ').slice(0, 40);
   if (!member) throw httpError('団員氏名を入力してください', 400);
-  const sei = toKatakana(body.sei), mei = toKatakana(body.mei);
-  if (!sei || !mei) throw httpError('お客さんの氏名（セイ・メイ）をカタカナで入力してください', 400);
-  if (!KATAKANA_RE.test(sei) || !KATAKANA_RE.test(mei)) throw httpError('お客さんの氏名はカタカナだけで入力してください（漢字・英字・記号は使えません）', 400);
-  if (sei.length + mei.length > 30) throw httpError('お客さんの氏名が長すぎます', 400);
-  const name = `${sei} ${mei}`;
-  const settle = body.settle === 'reception' ? 'reception' : 'member';
-  const note = String(body.note || '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').trim().slice(0, 200);
-  const cart = {};
-  const tickets = [];
-  for (const p of products) {
-    const q = Math.floor(Number((body.items || {})[p.id]) || 0);
-    if (q < 0 || q > MAX_QTY) throw httpError('枚数が不正です', 400);
-    if (q > 0) { cart[p.id] = q; tickets.push({ productId: p.id, name: p.name, unit: p.unit, qty: q }); }
-  }
-  for (const k of Object.keys(body.items || {})) {
-    if (Number(body.items[k]) > 0 && !products.some((p) => String(p.id) === String(k))) throw httpError('受け付けていない券種が含まれています。ページを開き直してください', 409);
-  }
-  const qty = tickets.reduce((a, t) => a + t.qty, 0);
-  if (!qty) throw httpError('券種と枚数を選んでください', 400);
-  if (qty > P.orderMax) throw httpError(`1回の予約は${P.orderMax}枚までです`, 400);
-  let amount;
-  try { amount = priceCart(products, cart).total; } catch (e) { throw httpError(e.message, 400); }
+  // 前の版の形（お客さん 1 人だけ）も受け付ける
+  const sent = Array.isArray(body.guests) ? body.guests : [{ sei: body.sei, mei: body.mei, items: body.items, note: body.note }];
+  if (!sent.length) throw httpError('お客さんを 1 人以上入れてください', 400);
+  if (sent.length > MAX_GUESTS) throw httpError(`1回にまとめて予約できるのは${MAX_GUESTS}人までです`, 400);
+  const guests = sent.map((g, i) => {
+    const who = sent.length > 1 ? `${i + 1}人目のお客さん：` : '';
+    const sei = toKatakana(g && g.sei), mei = toKatakana(g && g.mei);
+    if (!sei || !mei) throw httpError(`${who}氏名（セイ・メイ）をカタカナで入力してください`, 400);
+    if (!KATAKANA_RE.test(sei) || !KATAKANA_RE.test(mei)) throw httpError(`${who}氏名はカタカナだけで入力してください（漢字・英字・記号は使えません）`, 400);
+    if (sei.length + mei.length > 30) throw httpError(`${who}氏名が長すぎます`, 400);
+    const items = (g && g.items) || {};
+    for (const k of Object.keys(items)) {
+      if (Number(items[k]) > 0 && !products.some((p) => String(p.id) === String(k))) throw httpError('受け付けていない券種が含まれています。ページを開き直してください', 409);
+    }
+    const cart = {}, tickets = [];
+    for (const p of products) {
+      const q = Math.floor(Number(items[p.id]) || 0);
+      if (q < 0 || q > MAX_QTY) throw httpError(`${who}枚数が不正です`, 400);
+      if (q > 0) { cart[p.id] = q; tickets.push({ productId: p.id, name: p.name, unit: p.unit, qty: q }); }
+    }
+    const qty = tickets.reduce((a, t) => a + t.qty, 0);
+    if (!qty) throw httpError(`${who}券種と枚数を選んでください`, 400);
+    if (qty > P.orderMax) throw httpError(`${who}1人あたり${P.orderMax}枚までです`, 400);
+    let amount;
+    try { amount = priceCart(products, cart).total; } catch (e) { throw httpError(e.message, 400); }
+    const note = String((g && g.note) || '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').trim().slice(0, 200);
+    return { name: `${sei} ${mei}`, tickets, qty, amount, note };
+  });
+  const names = guests.map((g) => g.name);
+  if (new Set(names).size !== names.length) throw httpError('同じお客さんの氏名が 2 回入っています。1 人の分は 1 枚のカードにまとめてください', 400);
 
-  // いたずら対策：同じ接続元からの予約は 1 時間に ORDER_LIMIT 件まで
+  // いたずら対策：同じ接続元からの予約（お客さんの人数）は 1 時間に ORDER_LIMIT 件まで
   const ip = request.headers.get('CF-Connecting-IP') || 'local';
   const hourAgo = new Date(Date.now() - 3600000).toISOString();
   const { n } = await db.prepare('SELECT COUNT(*) AS n FROM order_log WHERE ip = ? AND at > ?').bind(ip, hourAgo).first();
-  if (n >= ORDER_LIMIT) throw httpError('短い時間に予約が続いたため、しばらく受け付けられません。時間をおいてください', 429);
+  if (n + guests.length > ORDER_LIMIT) throw httpError('短い時間に予約が続いたため、しばらく受け付けられません。時間をおいてください', 429);
 
-  // 番号は W1, W2, …（CSV で取り込む取り置きの番号と重ならないように）。同時に届いたら付け直す
+  // 番号は W1, W2, …（CSV で取り込む取り置きの番号と重ならないように）。まとめて 1 つのトランザクションで書く。同時に届いたら付け直す
   const now = new Date().toISOString();
   for (let attempt = 0; ; attempt++) {
     try {
       await db.batch([
-        db.prepare(`INSERT INTO reservations (project_id, res_no, name, kana, tickets, qty, amount, paid, settle, note, member, email, source, client_id, created_at, updated_at)
+        ...guests.map((g, i) => db.prepare(`INSERT INTO reservations (project_id, res_no, name, kana, tickets, qty, amount, paid, settle, note, member, email, source, client_id, created_at, updated_at)
             VALUES (?, 'W' || (SELECT COALESCE(MAX(CAST(SUBSTR(res_no, 2) AS INTEGER)), 0) + 1 FROM reservations WHERE project_id = ? AND res_no GLOB 'W[0-9]*'),
-              ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'web', ?, ?, ?)`)
-          .bind(P.id, P.id, name, name, JSON.stringify(tickets), qty, amount, settle, note, member, email, clientId, now, now),
-        db.prepare('INSERT INTO order_log (ip, at) VALUES (?, ?)').bind(ip, now),
+              ?, ?, ?, ?, ?, 0, 'member', ?, ?, ?, 'web', ?, ?, ?)`)
+          .bind(P.id, P.id, g.name, g.name, JSON.stringify(g.tickets), g.qty, g.amount, g.note, member, email, `${clientId}-${i}`, now, now)),
+        ...guests.map(() => db.prepare('INSERT INTO order_log (ip, at) VALUES (?, ?)').bind(ip, now)),
         db.prepare('DELETE FROM order_log WHERE at < ?').bind(new Date(Date.now() - 86400000).toISOString()),
         bumpRev(db, P.id),
       ]);
       break;
     } catch (e) {
       if (!/UNIQUE/i.test(String(e.message))) throw e;
-      const again = await db.prepare('SELECT * FROM reservations WHERE client_id = ?').bind(clientId).first();
-      if (again) return json({ ok: true, duplicate: true, reservation: orderReceipt(rowToReservation(again), P) });
+      const again = await already();
+      if (again.length) return json({ ok: true, duplicate: true, reservations: again.map((r) => orderReceipt(rowToReservation(r), P)), mailed: false });
       if (attempt >= 4) throw httpError('混み合っています。もう一度「予約する」を押してください', 503);
     }
   }
-  const saved = await db.prepare('SELECT * FROM reservations WHERE client_id = ?').bind(clientId).first();
-  return json({ ok: true, reservation: orderReceipt(rowToReservation(saved), P) });
+  const saved = (await already()).map((r) => orderReceipt(rowToReservation(r), P));
+  // 控えのメール（送信サービスの設定があるときだけ。届くのを待たずに返す）
+  let mailed = false;
+  if (mailConfigured(env)) {
+    const job = sendReceiptMail(env, email, member, saved, P).catch((e) => audit(db, member, 'order', '控えのメールを送れませんでした', `${email}：${String(e.message || e).slice(0, 200)}`));
+    if (ctx && ctx.waitUntil) ctx.waitUntil(job); else await job;
+    mailed = true;
+  }
+  return json({ ok: true, reservations: saved, mailed });
 }
 
 /** 予約した団員に見せる内容（控え） */
@@ -1696,6 +1720,45 @@ const orderReceipt = (r, P) => ({
   no: r.no, name: r.name, tickets: r.tickets, qty: r.qty, amount: r.amount, settle: r.settle, member: r.member, email: r.email, note: r.note,
   createdAt: r.createdAt, project: { id: P.id, name: P.name, startDate: P.startDate }, openAt: P.openAt,
 });
+
+// ===== 控えのメール =====
+// Cloudflare だけでは好きなアドレスにメールを送れないので、メール送信サービス Resend（https://resend.com）を使う。
+//   npx wrangler secret put RESEND_API_KEY   （Resend の API キー）
+//   npx wrangler secret put MAIL_FROM        （送り主。Resend で確認したドメインのアドレス。例: 定演チケット <ticket@example.com>）
+// 2 つとも設定してあるときだけ送る。なければ送らない（予約の画面の「メールで控えを送る」ボタンは、団員のメールアプリで送る）
+const mailConfigured = (env) => !!(env.RESEND_API_KEY && env.MAIL_FROM);
+
+/** 控えの本文（予約の画面の「メールで控えを送る」と同じ内容） */
+function receiptText(member, list, P) {
+  const total = list.reduce((a, r) => a + r.amount, 0);
+  const when = (iso) => isoJst(iso).slice(0, 16).replace('T', ' ');
+  return [
+    `${member} さん`,
+    '',
+    `${P.name} のチケットの取り置きを、次のとおり受け付けました。`,
+    '',
+    ...list.flatMap((r) => [`■ 予約番号 ${r.no}　${r.name} 様`, `　${describeTickets(r.tickets)}　${yen(r.amount)}` + (r.note ? `\n　備考：${r.note}` : '')]),
+    '',
+    `合計 ${list.length} 人・${list.reduce((a, r) => a + r.qty, 0)} 枚・${yen(total)}`,
+    `代金は終演後に ${member} さんからまとめて回収します（お客さんは受付で払いません）。`,
+    '',
+    'お客さんには、当日受付でお名前（カタカナ）か予約番号を伝えるようお知らせください。チケットをお渡しします。',
+    P.openAt ? `ウェブでの取り置きは ${when(P.openAt)}（開場時刻）で締め切ります。変更・取り消しはチケット係に連絡してください。` : '変更・取り消しはチケット係に連絡してください。',
+  ].join('\n');
+}
+
+async function sendReceiptMail(env, to, member, list, P) {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: env.MAIL_FROM, to: [to],
+      subject: `【取り置きの控え】${P.name}（${list.map((r) => r.no).join('・')}）`,
+      text: receiptText(member, list, P),
+    }),
+  });
+  if (!res.ok) throw new Error(`Resend ${res.status} ${(await res.text()).slice(0, 200)}`);
+}
 
 // ===== ユーティリティ =====
 function httpError(message, status, headers) {
