@@ -137,8 +137,8 @@ wrangler.toml          Cloudflare の設定
 
 ```bash
 # 1. このリポジトリを取得して依存をインストール
-git clone https://github.com/adatchan/teien-ticket.git
-cd teien-ticket
+git clone https://github.com/Adatchan/teien.git
+cd teien
 npm install
 
 # 2. Cloudflare にログイン（ブラウザが開きます）
