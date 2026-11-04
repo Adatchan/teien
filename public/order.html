@@ -107,9 +107,9 @@
     <div class="pay-rule">代金は、終演後に団員（あなた）がまとめて払います。受付ではお客さんから受け取りません。</div>
 
     <div class="label" style="margin-top:14px">当日来るお客さん</div>
-    <div class="hint" style="margin-top:0">お客さんごとにカードを 1 枚使います。お名前は<b>カタカナ</b>で、セイとメイに分けて入れてください（受付でお名前を探すのに使います）。ひらがなで入れるとカタカナに直します。</div>
+    <div class="hint" style="margin-top:0">一緒に来るお客さん 1 組ごとにカードを 1 枚使います。お名前は受付で名乗る代表の方を<b>カタカナ</b>で、セイとメイに分けて入れてください（受付でお名前を探すのに使います）。ひらがなで入れるとカタカナに直します。</div>
     <div id="guests"></div>
-    <button class="add" id="addGuest" type="button">＋ お客さんを追加</button>
+    <button class="add" id="addGuest" type="button">＋ 組を追加</button>
     <div class="total"><span class="k" id="totalQty"></span><span class="v" id="totalAmt">¥0</span></div>
     <div class="hint" id="maxHint"></div>
     <div class="err" id="formErr"></div>
@@ -256,7 +256,7 @@
   function guestCard(g, i) {
     const n = qtyOf(g);
     return '<div class="guest" data-key="' + g.key + '">' +
-      '<div class="gh"><b>' + (i + 1) + '人目のお客さん</b>' + (guests.length > 1 ? '<button class="rm" type="button" data-rm="' + g.key + '">✕ このお客さんを消す</button>' : '') + '</div>' +
+      '<div class="gh"><b>' + (i + 1) + '組目のお客さん</b>' + (guests.length > 1 ? '<button class="rm" type="button" data-rm="' + g.key + '">✕ この組を消す</button>' : '') + '</div>' +
       '<div class="two">' +
         '<div><label class="f">セイ<span class="req">必須</span><input class="in kana" data-f="sei" maxlength="20" autocomplete="off" placeholder="例: オカダイ" value="' + esc(g.sei) + '"></label></div>' +
         '<div><label class="f">メイ<span class="req">必須</span><input class="in kana" data-f="mei" maxlength="20" autocomplete="off" placeholder="例: タロウ" value="' + esc(g.mei) + '"></label></div>' +
@@ -281,10 +281,10 @@
   }
   function renderTotal() {
     const q = guests.reduce((a, g) => a + qtyOf(g), 0), amt = guests.reduce((a, g) => a + priceOf(g), 0);
-    $('totalQty').textContent = q ? guests.filter(qtyOf).length + '人・' + q + '枚' : '';
+    $('totalQty').textContent = q ? guests.filter(qtyOf).length + '組・' + q + '枚' : '';
     $('totalAmt').textContent = yen(amt);
     $('addGuest').disabled = guests.length >= info.maxGuests;
-    $('maxHint').textContent = 'お客さん 1 人あたり' + info.max + '枚まで、1 回に' + info.maxGuests + '人までまとめて予約できます。';
+    $('maxHint').textContent = '1 組あたり' + info.max + '枚まで、1 回に' + info.maxGuests + '組までまとめて予約できます。';
   }
   const findGuest = el => guests.find(g => String(g.key) === el.closest('.guest').dataset.key);
   // カードの中の入力
@@ -307,7 +307,7 @@
     if (!b) return;
     if (b.dataset.rm) {
       const g = guests.find(x => String(x.key) === b.dataset.rm);
-      if ((g.sei || g.mei || qtyOf(g)) && !confirm((g.sei || g.mei ? g.sei + ' ' + g.mei + ' さん' : 'このお客さん') + 'のカードを消しますか？')) return;
+      if ((g.sei || g.mei || qtyOf(g)) && !confirm((g.sei || g.mei ? g.sei + ' ' + g.mei + ' さんの組' : 'この組') + 'のカードを消しますか？')) return;
       guests = guests.filter(x => x !== g);
       renderGuests();
       return;
@@ -348,31 +348,31 @@
 
   // ---------- 確認 → 予約 ----------
   function rcRow(r, i) {
-    return '<div class="rc"><div class="top"><span class="no">' + esc(r.no || (i + 1) + '人目') + '</span><span class="nm">' + esc(r.name) + '</span><span class="amt">' + yen(r.amount) + '</span></div>' +
+    return '<div class="rc"><div class="top"><span class="no">' + esc(r.no || (i + 1) + '組目') + '</span><span class="nm">' + esc(r.name) + '</span><span class="amt">' + yen(r.amount) + '</span></div>' +
       '<div class="sub">' + esc(describeTickets(r.tickets)) + (r.note ? '　備考：' + esc(r.note) : '') + '</div></div>';
   }
   $('toConfirm').onclick = () => {
     const member = $('member').value.trim();
     // 何も入れていないカードは無視する
     const used = guests.filter(g => g.sei.trim() || g.mei.trim() || qtyOf(g) || g.note.trim());
-    let err = !member ? '団員氏名を入力してください' : !used.length ? 'お客さんを 1 人以上入れてください' : '';
+    let err = !member ? '団員氏名を入力してください' : !used.length ? 'お客さんを 1 組以上入れてください' : '';
     used.forEach(g => { g.sei = toKatakana(g.sei); g.mei = toKatakana(g.mei); });
     if (!err) used.forEach((g, i) => {
       if (err) return;
-      const who = (guests.indexOf(g) + 1) + '人目のお客さん：';
+      const who = (guests.indexOf(g) + 1) + '組目のお客さん：';
       if (!g.sei || !g.mei) err = who + '氏名（セイ・メイ）をカタカナで入力してください';
       else if (!isKatakana(g.sei) || !isKatakana(g.mei)) err = who + '氏名はカタカナだけで入力してください';
       else if (!qtyOf(g)) err = who + '券種と枚数を選んでください';
     });
     const names = used.map(g => g.sei + ' ' + g.mei);
-    if (!err && new Set(names).size !== names.length) err = '同じお客さんの氏名が 2 回入っています。1 人の分は 1 枚のカードにまとめてください';
+    if (!err && new Set(names).size !== names.length) err = '同じ氏名が 2 回入っています。1 組の分は 1 枚のカードにまとめてください';
     renderGuests();
     $('formErr').textContent = err;
     if (err) return;
     guests = used;
     $('cfList').innerHTML = used.map((g, i) => rcRow({ name: g.sei + ' ' + g.mei, tickets: ticketsOf(g), amount: priceOf(g), note: g.note.trim() }, i)).join('');
     const total = used.reduce((a, g) => a + priceOf(g), 0);
-    $('cfPayText').textContent = '代金は終演後に ' + member + ' さんがまとめて払います（' + used.length + '人分）';
+    $('cfPayText').textContent = '代金は終演後に ' + member + ' さんがまとめて払います（' + used.length + '組分）';
     $('cfAmt').textContent = yen(total);
     $('cfErr').textContent = '';
     $('submitBtn').disabled = false;
@@ -396,7 +396,7 @@
       lastDone = { list, member };
       $('dnList').innerHTML = list.map(rcRow).join('');
       const total = list.reduce((a, r) => a + r.amount, 0);
-      $('dnPayText').textContent = '代金は終演後に ' + member + ' さんがまとめて払います（' + list.length + '人分）';
+      $('dnPayText').textContent = '代金は終演後に ' + member + ' さんがまとめて払います（' + list.length + '組分）';
       $('dnAmt').textContent = yen(total);
       $('mailed').classList.toggle('hidden', !d.mailed);
       $('mailed').textContent = '控えを ' + email + ' あてにメールで送りました（届かないときは迷惑メールのフォルダも見てください）。';
@@ -420,7 +420,7 @@
       member + ' さん', '',
       P.name + ' のチケットの取り置きを、次のとおり受け付けました。', '',
       ...list.map(r => '■ 予約番号 ' + r.no + '　' + r.name + ' 様\n　' + describeTickets(r.tickets) + '　' + yen(r.amount) + (r.note ? '\n　備考：' + r.note : '')),
-      '', '合計 ' + list.length + ' 人・' + list.reduce((a, r) => a + r.qty, 0) + ' 枚・' + yen(total),
+      '', '合計 ' + list.length + ' 組・' + list.reduce((a, r) => a + r.qty, 0) + ' 枚・' + yen(total),
       '代金は終演後に ' + member + ' さんからまとめて回収します（お客さんは受付で払いません）。', '',
       'お客さんには、当日受付でお名前（カタカナ）か予約番号を伝えるようお知らせください。',
       '変更・取り消しはチケット係に連絡してください。',

@@ -351,7 +351,7 @@ describe('ウェブの取り置き予約（/order・団員が知り合いの分�
     assert.equal(d.reservations.memberTotal, 3300);
     assert.equal(d.reservations.dueTotal, 0);
   });
-  test('複数のお客さんをまとめて予約できる（お客さんごとに番号）。同じ氏名が 2 回はだめ。1 人でも間違いがあれば 1 人も入らない', async () => {
+  test('複数のお客さんをまとめて予約できる（お客さんごとに番号）。同じ氏名が 2 回はだめ。1 組でも間違いがあれば 1 組も入らない', async () => {
     const guests = [
       { sei: 'マトメ', mei: 'イチ', items: { [id('一般')]: 1 }, note: '前の方の席' },
       { sei: 'まとめ', mei: 'に', items: { [id('学生')]: 2 } },
@@ -363,7 +363,7 @@ describe('ウェブの取り置き予約（/order・団員が知り合いの分�
     const before = (await w.query('SELECT COUNT(*) AS n FROM reservations'))[0].n;
     r = await w.api('/api/order', { body: { ...auth, clientId: cid(), member: '山田 花子', guests: [{ sei: 'イイ', mei: 'ヒト', items: { [id('一般')]: 1 } }, { sei: '悪い', mei: 'ヒト', items: { [id('一般')]: 1 } }] } });
     assert.equal(r.status, 400);
-    assert.match(r.body.error, /2人目/);
+    assert.match(r.body.error, /2組目/);
     r = await w.api('/api/order', { body: { ...auth, clientId: cid(), member: '山田 花子', guests: [guests[0], guests[0]] } });
     assert.equal(r.status, 400);
     assert.equal((await w.query('SELECT COUNT(*) AS n FROM reservations'))[0].n, before);

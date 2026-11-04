@@ -1600,13 +1600,13 @@ async function applyImport(db, P, plan) {
 // ===== ウェブの取り置き予約（/order） =====
 // 出演者（団員）が、知り合いにチケットを事前に渡せないときに使う。
 //   1. 団員のメールアドレスと、事前に渡した取り置き専用パスワードで認証（間違いが続くとしばらく止める）
-//   2. 団員氏名を入れ、お客さんごとのカード（氏名はカタカナのセイ・メイ、券種と枚数、備考）を必要なだけ足して、まとめて予約
+//   2. 団員氏名を入れ、お客さん 1 組ごとのカード（氏名はカタカナのセイ・メイ、券種と枚数、備考）を必要なだけ足して、まとめて予約
 //   代金はいつも、終演後に団員からまとめて回収する（settle = member。受付ではお客さんから受け取らない）
 //   3. 予約したら控えを表示。メールの送信サービス（Resend）の設定があれば、団員のメールアドレスに控えを送る
 // ログインはしない。予約のたびにパスワードを確かめる。
 // 受け付けるのは「当日に使う」公演で、ウェブ予約を受け付ける設定にしてあり、開場時刻より前のときだけ。
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MAX_GUESTS = 10;   // 1 回にまとめて予約できるお客さんの数
+const MAX_GUESTS = 10;   // 1 回にまとめて予約できるお客さんの組の数
 /** カタカナにそろえる（ひらがな・半角カナ・全角英数を直し、空白を取る） */
 const toKatakana = (s) => String(s || '').normalize('NFKC').replace(/[ぁ-ゖ]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0x60)).replace(/\s+/g, '');
 const KATAKANA_RE = /^[ァ-ー]+$/;   // ァ〜ヺ・ー（中黒も可）
@@ -1646,12 +1646,12 @@ async function orderApi(request, env, url, route, ctx) {
 
   const member = cleanName(body.member).normalize('NFKC').replace(/\s+/g, ' ').slice(0, 40);
   if (!member) throw httpError('団員氏名を入力してください', 400);
-  // 前の版の形（お客さん 1 人だけ）も受け付ける
+  // 前の版の形（お客さん 1 組だけ）も受け付ける
   const sent = Array.isArray(body.guests) ? body.guests : [{ sei: body.sei, mei: body.mei, items: body.items, note: body.note }];
-  if (!sent.length) throw httpError('お客さんを 1 人以上入れてください', 400);
-  if (sent.length > MAX_GUESTS) throw httpError(`1回にまとめて予約できるのは${MAX_GUESTS}人までです`, 400);
+  if (!sent.length) throw httpError('お客さんを 1 組以上入れてください', 400);
+  if (sent.length > MAX_GUESTS) throw httpError(`1回にまとめて予約できるのは${MAX_GUESTS}組までです`, 400);
   const guests = sent.map((g, i) => {
-    const who = sent.length > 1 ? `${i + 1}人目のお客さん：` : '';
+    const who = sent.length > 1 ? `${i + 1}組目のお客さん：` : '';
     const sei = toKatakana(g && g.sei), mei = toKatakana(g && g.mei);
     if (!sei || !mei) throw httpError(`${who}氏名（セイ・メイ）をカタカナで入力してください`, 400);
     if (!KATAKANA_RE.test(sei) || !KATAKANA_RE.test(mei)) throw httpError(`${who}氏名はカタカナだけで入力してください（漢字・英字・記号は使えません）`, 400);
@@ -1668,14 +1668,14 @@ async function orderApi(request, env, url, route, ctx) {
     }
     const qty = tickets.reduce((a, t) => a + t.qty, 0);
     if (!qty) throw httpError(`${who}券種と枚数を選んでください`, 400);
-    if (qty > P.orderMax) throw httpError(`${who}1人あたり${P.orderMax}枚までです`, 400);
+    if (qty > P.orderMax) throw httpError(`${who}1組あたり${P.orderMax}枚までです`, 400);
     let amount;
     try { amount = priceCart(products, cart).total; } catch (e) { throw httpError(e.message, 400); }
     const note = String((g && g.note) || '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').trim().slice(0, 200);
     return { name: `${sei} ${mei}`, tickets, qty, amount, note };
   });
   const names = guests.map((g) => g.name);
-  if (new Set(names).size !== names.length) throw httpError('同じお客さんの氏名が 2 回入っています。1 人の分は 1 枚のカードにまとめてください', 400);
+  if (new Set(names).size !== names.length) throw httpError('同じ氏名が 2 回入っています。1 組の分は 1 枚のカードにまとめてください', 400);
 
   // いたずら対策：同じ接続元からの予約（お客さんの人数）は 1 時間に ORDER_LIMIT 件まで
   const ip = request.headers.get('CF-Connecting-IP') || 'local';
@@ -1739,7 +1739,7 @@ function receiptText(member, list, P) {
     '',
     ...list.flatMap((r) => [`■ 予約番号 ${r.no}　${r.name} 様`, `　${describeTickets(r.tickets)}　${yen(r.amount)}` + (r.note ? `\n　備考：${r.note}` : '')]),
     '',
-    `合計 ${list.length} 人・${list.reduce((a, r) => a + r.qty, 0)} 枚・${yen(total)}`,
+    `合計 ${list.length} 組・${list.reduce((a, r) => a + r.qty, 0)} 枚・${yen(total)}`,
     `代金は終演後に ${member} さんからまとめて回収します（お客さんは受付で払いません）。`,
     '',
     'お客さんには、当日受付でお名前（カタカナ）か予約番号を伝えるようお知らせください。チケットをお渡しします。',
