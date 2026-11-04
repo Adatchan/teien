@@ -4,6 +4,8 @@
 模擬店のレジ・キッチンのシステム（[mogiten](https://github.com/adatchan/mogiten)）をもとに作りました。
 **Cloudflare Workers + D1**（無料プラン）で動きます。
 
+本番: **https://teien-ticket.adachiyuki0409.workers.dev**（D1 のデータベース `teien-ticket` はアジア太平洋に置いています）
+
 | 画面 | URL | 認証 | 使い方 |
 |---|---|---|---|
 | 入口 | `/` | 不要 | 各画面へのリンクだけ |
